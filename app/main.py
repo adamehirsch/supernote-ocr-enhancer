@@ -461,8 +461,8 @@ def run_processing():
 
     logger.info(f"Processing complete: {successful} files, {total_pages} pages, {failed} failed")
 
-    # Update sync database for modified files (Mac App mode)
-    # This ensures the Mac app knows files changed and will UPLOAD (not download)
+    # Update sync database for modified files
+    # Prevents the sync system from overwriting OCR-enhanced files
     if sync_handler and WRITE_TO_NOTE:
         modified_files = [r.file_path for r in results if r.success and r.pages_processed > 0]
         if modified_files:
