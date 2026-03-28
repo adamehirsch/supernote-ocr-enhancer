@@ -223,3 +223,121 @@ class TestMacAppGetStatus:
 
         assert status["mode"] == "mac_app"
         assert status["status"] == "unavailable"
+
+
+class TestMacAppUpdateModifiedFiles:
+    """Tests for MacAppSyncHandler.update_modified_files()."""
+
+    def test_updates_file_sync_info(self, tmp_path):
+        """Should update last_size, last_md5, last_modified in file_sync_info."""
+        db_path = tmp_path / "en_supernote.db"
+        _create_file_sync_info_db(
+            db_path,
+            rows=[
+                ("Note/test.note", 1000, 1000000000, "old_md5_hash", 1),
+            ],
+        )
+
+        notes_base = tmp_path / "Supernote"
+        note_dir = notes_base / "Note"
+        note_dir.mkdir(parents=True)
+        note_file = note_dir / "test.note"
+        note_file.write_bytes(b"modified content here")
+
+        handler = MacAppSyncHandler(database_path=db_path, notes_base_path=notes_base)
+        updated, failed = handler.update_modified_files([note_file])
+
+        assert updated == 1
+        assert failed == 0
+
+        # Verify the database was updated
+        conn = sqlite3.connect(str(db_path))
+        row = conn.execute(
+            "SELECT last_size, last_md5, last_modified FROM file_sync_info WHERE path = 'Note/test.note'"
+        ).fetchone()
+        conn.close()
+
+        assert row is not None
+        expected_size = note_file.stat().st_size
+        assert row[0] == expected_size
+        assert row[1] is not None and row[1] != "old_md5_hash"
+        assert row[2] is not None and row[2] != 1000000000
+
+    def test_path_resolution(self, tmp_path):
+        """Should convert absolute paths to relative paths matching file_sync_info."""
+        db_path = tmp_path / "en_supernote.db"
+        _create_file_sync_info_db(
+            db_path,
+            rows=[
+                ("Note/deep/nested.note", 500, 1000000000, "old_hash", 1),
+            ],
+        )
+
+        notes_base = tmp_path / "Supernote"
+        note_dir = notes_base / "Note" / "deep"
+        note_dir.mkdir(parents=True)
+        note_file = note_dir / "nested.note"
+        note_file.write_bytes(b"nested content")
+
+        handler = MacAppSyncHandler(database_path=db_path, notes_base_path=notes_base)
+        updated, failed = handler.update_modified_files([note_file])
+
+        assert updated == 1
+        assert failed == 0
+
+    def test_fallback_to_filename_match(self, tmp_path):
+        """Should fall back to filename matching when notes_base_path is not set."""
+        db_path = tmp_path / "en_supernote.db"
+        _create_file_sync_info_db(
+            db_path,
+            rows=[
+                ("Note/somefile.note", 500, 1000000000, "old_hash", 1),
+            ],
+        )
+
+        note_file = tmp_path / "somefile.note"
+        note_file.write_bytes(b"content")
+
+        handler = MacAppSyncHandler(database_path=db_path)  # no notes_base_path
+        updated, failed = handler.update_modified_files([note_file])
+
+        assert updated == 1
+        assert failed == 0
+
+    def test_file_not_in_database(self, tmp_path):
+        """Should count as success when file is not tracked in database (new file)."""
+        db_path = tmp_path / "en_supernote.db"
+        _create_file_sync_info_db(db_path)  # empty
+
+        note_file = tmp_path / "new.note"
+        note_file.write_bytes(b"new content")
+
+        handler = MacAppSyncHandler(database_path=db_path, notes_base_path=tmp_path)
+        updated, failed = handler.update_modified_files([note_file])
+
+        assert updated == 1
+        assert failed == 0
+
+    def test_missing_file(self, tmp_path):
+        """Should count as failure when file no longer exists on disk."""
+        db_path = tmp_path / "en_supernote.db"
+        _create_file_sync_info_db(db_path)
+
+        missing_file = tmp_path / "gone.note"
+
+        handler = MacAppSyncHandler(database_path=db_path, notes_base_path=tmp_path)
+        updated, failed = handler.update_modified_files([missing_file])
+
+        assert updated == 0
+        assert failed == 1
+
+    def test_empty_list(self, tmp_path):
+        """Should return 0,0 for empty file list."""
+        db_path = tmp_path / "en_supernote.db"
+        _create_file_sync_info_db(db_path)
+
+        handler = MacAppSyncHandler(database_path=db_path)
+        updated, failed = handler.update_modified_files([])
+
+        assert updated == 0
+        assert failed == 0

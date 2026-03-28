@@ -213,17 +213,11 @@ class MacAppSyncHandler(SyncHandler):
 
     def update_modified_files(self, modified_files: List[Path]) -> Tuple[int, int]:
         """
-        Update the Mac app's SQLite database after OCR injection.
+        Update file_sync_info after OCR injection to prevent re-download.
 
-        CRITICAL: To trigger UPLOAD (not download), we must:
-        - local_s_h_a = NEW hash (matches our modified file)
-        - server_s_h_a = OLD hash (what server actually has) <- KEEP UNCHANGED
-        - local_size = NEW size
-        - server_size = OLD size <- KEEP UNCHANGED
-
-        This signals to the app: "local file changed, server has old version, UPLOAD needed"
-        If we set server_s_h_a = local_s_h_a, the app thinks they're in sync but then
-        queries the real server, sees a mismatch, and DOWNLOADS (overwriting our changes).
+        Sets last_size, last_md5, and last_modified to match the modified file
+        on disk. The Partner app compares these values against the filesystem
+        during its sync scan — matching values mean "no change detected."
         """
         if not modified_files:
             return 0, 0
@@ -236,8 +230,7 @@ class MacAppSyncHandler(SyncHandler):
         failed = 0
 
         try:
-            conn = sqlite3.connect(str(self.database_path))
-            conn.row_factory = sqlite3.Row
+            conn = self._connect()
 
             for file_path in modified_files:
                 try:
@@ -247,53 +240,52 @@ class MacAppSyncHandler(SyncHandler):
                         failed += 1
                         continue
 
-                    # Compute new hash and size
                     new_md5 = compute_file_md5(file_path)
                     new_size = file_path.stat().st_size
-                    file_name = file_path.name
-                    file_dir = str(file_path.parent) + "/"
+                    new_mtime = int(file_path.stat().st_mtime)
 
-                    # ONLY update local_s_h_a and local_size
-                    # DO NOT touch server_s_h_a or server_size - keep them as old values
-                    # This triggers UPLOAD: local differs from server, local is newer
-                    cursor = conn.execute(
-                        """
-                        UPDATE supernote_sqlite_info
-                        SET local_s_h_a = ?,
-                            local_size = ?
-                        WHERE file_name = ? AND path = ?
-                    """,
-                        (new_md5, str(new_size), file_name, file_dir),
-                    )
+                    # Resolve relative path for file_sync_info.path
+                    relative_path = None
+                    if self.notes_base_path:
+                        try:
+                            relative_path = str(
+                                file_path.relative_to(self.notes_base_path)
+                            )
+                        except ValueError:
+                            pass  # Fall through to filename fallback
+
+                    if relative_path:
+                        cursor = conn.execute(
+                            """
+                            UPDATE file_sync_info
+                            SET last_size = ?, last_md5 = ?, last_modified = ?
+                            WHERE path = ?
+                        """,
+                            (new_size, new_md5, new_mtime, relative_path),
+                        )
+                    else:
+                        # Fallback: match by filename when path can't be resolved
+                        file_name = file_path.name
+                        cursor = conn.execute(
+                            """
+                            UPDATE file_sync_info
+                            SET last_size = ?, last_md5 = ?, last_modified = ?
+                            WHERE path LIKE ?
+                        """,
+                            (new_size, new_md5, new_mtime, f"%/{file_name}"),
+                        )
 
                     if cursor.rowcount > 0:
                         logger.debug(
-                            f"Updated sync database (upload trigger): {file_name}"
+                            f"Updated file_sync_info: {relative_path or file_path.name}"
                         )
                         updated += 1
                     else:
-                        # Try to find by filename only (path might differ slightly)
-                        cursor = conn.execute(
-                            """
-                            UPDATE supernote_sqlite_info
-                            SET local_s_h_a = ?,
-                                local_size = ?
-                            WHERE file_name = ?
-                        """,
-                            (new_md5, str(new_size), file_name),
+                        logger.warning(
+                            f"File not found in file_sync_info: {file_path.name}"
                         )
-
-                        if cursor.rowcount > 0:
-                            logger.debug(
-                                f"Updated sync database by name (upload trigger): {file_name}"
-                            )
-                            updated += 1
-                        else:
-                            logger.warning(
-                                f"File not found in sync database: {file_name}"
-                            )
-                            # Not a failure - file might be new or not synced yet
-                            updated += 1  # Count as success since OCR was injected
+                        # Not a failure — file might be new or not synced yet
+                        updated += 1
 
                 except Exception as e:
                     logger.error(f"Failed to update sync for {file_path}: {e}")
