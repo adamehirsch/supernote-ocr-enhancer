@@ -11,7 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
 from sync_handlers import auto_detect_mac_app_database, auto_detect_mac_app_path
-from sync_handlers import MacAppSyncHandler
+from sync_handlers import MacAppSyncHandler, create_sync_handler
 
 
 def _create_file_sync_info_db(db_path, rows=None):
@@ -341,3 +341,36 @@ class TestMacAppUpdateModifiedFiles:
 
         assert updated == 0
         assert failed == 0
+
+
+class TestCreateSyncHandler:
+    """Tests for create_sync_handler() factory with db_key."""
+
+    def test_mac_app_mode_passes_db_key(self, tmp_path):
+        """Should pass db_key to MacAppSyncHandler."""
+        db_path = tmp_path / "en_supernote.db"
+        _create_file_sync_info_db(db_path)
+
+        handler = create_sync_handler(
+            mode="mac_app", mac_app_database=str(db_path), mac_app_db_key="test_key"
+        )
+
+        assert isinstance(handler, MacAppSyncHandler)
+        assert handler.db_key == "test_key"
+
+    def test_mac_app_mode_without_key(self, tmp_path):
+        """Should work without a key (unencrypted database)."""
+        db_path = tmp_path / "en_supernote.db"
+        _create_file_sync_info_db(db_path)
+
+        handler = create_sync_handler(mode="mac_app", mac_app_database=str(db_path))
+
+        assert isinstance(handler, MacAppSyncHandler)
+        assert handler.db_key is None
+
+    def test_none_mode(self):
+        """Should create NoOpSyncHandler for mode=none."""
+        from sync_handlers import NoOpSyncHandler
+
+        handler = create_sync_handler(mode="none")
+        assert isinstance(handler, NoOpSyncHandler)

@@ -576,6 +576,7 @@ def create_sync_handler(
     mode: Optional[str] = None,
     mac_app_database: Optional[str] = None,
     mac_app_notes_path: Optional[str] = None,
+    mac_app_db_key: Optional[str] = None,
     personal_cloud_container: str = "supernote-mariadb",
     personal_cloud_password: Optional[str] = None,
     personal_cloud_data_path: Optional[str] = None,
@@ -593,8 +594,9 @@ def create_sync_handler(
 
     Args:
         mode: Explicit mode override ("none", "mac_app", or "personal_cloud")
-        mac_app_database: Path to Mac app's supernote.db
+        mac_app_database: Path to Mac app's en_supernote.db
         mac_app_notes_path: Path to Mac app's Supernote folder
+        mac_app_db_key: SQLCipher passphrase for encrypted Mac app database
         personal_cloud_container: Docker container name for MariaDB
         personal_cloud_password: MySQL password
         personal_cloud_data_path: Base path for .note files
@@ -627,6 +629,7 @@ def create_sync_handler(
                 notes_base_path=Path(mac_app_notes_path)
                 if mac_app_notes_path
                 else None,
+                db_key=mac_app_db_key,
             )
         elif mode == "personal_cloud":
             logger.info(
@@ -664,6 +667,7 @@ def create_sync_handler(
         return MacAppSyncHandler(
             database_path=Path(mac_app_database),
             notes_base_path=Path(mac_app_notes_path) if mac_app_notes_path else None,
+            db_key=mac_app_db_key,
         )
 
     # No sync configuration - use no-op

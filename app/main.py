@@ -51,6 +51,7 @@ RESET_DATABASE = os.getenv("RESET_DATABASE", "false").lower() == "true"
 STORAGE_MODE = os.getenv("STORAGE_MODE", "")
 MACAPP_DATABASE_PATH = os.getenv("MACAPP_DATABASE_PATH", "")
 MACAPP_NOTES_PATH = os.getenv("MACAPP_NOTES_PATH", "")
+MACAPP_DB_KEY = os.getenv("MACAPP_DB_KEY", "")
 # FILE_RECOGN_TYPE: "0" = no device OCR, "1" = device OCR enabled, "keep" = preserve existing
 FILE_RECOGN_TYPE = os.getenv("FILE_RECOGN_TYPE", "keep")
 # OCR_PDF_LAYERS: Extract and OCR embedded PNGs from PDF/custom background layers
@@ -533,6 +534,7 @@ def main():
             mode=STORAGE_MODE or None,
             mac_app_database=MACAPP_DATABASE_PATH or None,
             mac_app_notes_path=MACAPP_NOTES_PATH or None,
+            mac_app_db_key=MACAPP_DB_KEY or None,
             sync_server_compose=SYNC_SERVER_COMPOSE or None,
             sync_server_env=SYNC_SERVER_ENV or None
         )
