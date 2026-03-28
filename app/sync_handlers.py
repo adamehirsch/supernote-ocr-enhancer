@@ -102,29 +102,64 @@ class MacAppSyncHandler(SyncHandler):
     """
     Sync handler for the official Supernote Mac app.
 
-    The Mac app stores sync state in a SQLite database at:
+    The Mac app stores sync state in an encrypted SQLite database (SQLCipher 4) at:
     ~/Library/Containers/com.ratta.supernote/Data/Library/Application Support/
-    com.ratta.supernote/<USER_ID>/supernote.db
+    com.ratta.supernote/<USER_ID>/en_supernote.db
 
-    The relevant table is `supernote_sqlite_info` with columns:
-    - file_name: basename of the file
-    - path: directory containing the file (absolute path)
-    - local_s_h_a: MD5 hash of local file
-    - server_s_h_a: MD5 hash on server (we set equal to local)
-    - local_size: file size in bytes
-    - server_size: file size on server (we set equal to local)
+    The relevant table is `file_sync_info` with columns:
+    - path: relative path from Supernote root (e.g. "Note/file.note")
+    - last_size: file size in bytes
+    - last_modified: unix timestamp of last modification
+    - last_md5: MD5 hash of file content
+    - is_file: 1 for files, 0 for directories
+
+    After OCR injection, we update last_size/last_md5/last_modified to match the
+    modified file on disk. This prevents the Partner app from detecting a mismatch
+    and re-downloading the original (unenhanced) file from the cloud.
+
+    Note: This intentionally does NOT trigger an upload. The OCR-enhanced files
+    stay local-only. The Partner app is a read-only sync client — uploading
+    modified files to the Supernote cloud could confuse the device.
     """
 
-    def __init__(self, database_path: Path, notes_base_path: Optional[Path] = None):
+    def __init__(
+        self,
+        database_path: Path,
+        notes_base_path: Optional[Path] = None,
+        db_key: Optional[str] = None,
+    ):
         """
         Initialize Mac App sync handler.
 
         Args:
-            database_path: Path to supernote.db
-            notes_base_path: Base path where .note files are stored (for path matching)
+            database_path: Path to en_supernote.db
+            notes_base_path: Base path of the Supernote folder (for resolving relative paths)
+            db_key: SQLCipher passphrase (None for unencrypted databases)
         """
         self.database_path = Path(database_path)
         self.notes_base_path = Path(notes_base_path) if notes_base_path else None
+        self.db_key = db_key
+
+    def _connect(self):
+        """
+        Open a connection to the sync database.
+
+        Uses pysqlcipher3 when a key is configured, plain sqlite3 otherwise.
+        """
+        if self.db_key:
+            try:
+                from pysqlcipher3 import dbapi2 as sqlcipher
+            except ImportError:
+                raise RuntimeError(
+                    "pysqlcipher3 is required for encrypted databases. "
+                    "Install with: C_INCLUDE_PATH=$(brew --prefix sqlcipher)/include "
+                    "LIBRARY_PATH=$(brew --prefix sqlcipher)/lib pip install pysqlcipher3"
+                )
+            conn = sqlcipher.connect(str(self.database_path))
+            conn.execute(f'PRAGMA key = "{self.db_key}"')
+            return conn
+        else:
+            return sqlite3.connect(str(self.database_path))
 
     def is_available(self) -> bool:
         """Check if the Mac app database exists and is accessible."""

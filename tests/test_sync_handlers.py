@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
 from sync_handlers import auto_detect_mac_app_database, auto_detect_mac_app_path
+from sync_handlers import MacAppSyncHandler
 
 
 class TestAutoDetectMacAppDatabase:
@@ -48,3 +49,84 @@ class TestAutoDetectMacAppDatabase:
             result = auto_detect_mac_app_database()
 
         assert result is None
+
+
+class TestMacAppConnect:
+    """Tests for MacAppSyncHandler._connect() with and without encryption."""
+
+    def test_connect_unencrypted(self, tmp_path):
+        """Should connect to a plain SQLite database when no key is set."""
+        db_path = tmp_path / "test.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE test (id INTEGER)")
+        conn.execute("INSERT INTO test VALUES (1)")
+        conn.commit()
+        conn.close()
+
+        handler = MacAppSyncHandler(database_path=db_path)
+        conn = handler._connect()
+        try:
+            rows = conn.execute("SELECT * FROM test").fetchall()
+            assert rows == [(1,)]
+        finally:
+            conn.close()
+
+    def test_connect_encrypted(self, tmp_path):
+        """Should connect to an encrypted database when key is set."""
+        from pysqlcipher3 import dbapi2 as sqlcipher
+
+        db_path = tmp_path / "encrypted.db"
+        key = "test_key_123"
+
+        conn = sqlcipher.connect(str(db_path))
+        conn.execute(f'PRAGMA key = "{key}"')
+        conn.execute("CREATE TABLE test (id INTEGER)")
+        conn.execute("INSERT INTO test VALUES (42)")
+        conn.commit()
+        conn.close()
+
+        handler = MacAppSyncHandler(database_path=db_path, db_key=key)
+        conn = handler._connect()
+        try:
+            rows = conn.execute("SELECT * FROM test").fetchall()
+            assert rows == [(42,)]
+        finally:
+            conn.close()
+
+    def test_connect_wrong_key_fails(self, tmp_path):
+        """Should fail when the wrong key is provided."""
+        from pysqlcipher3 import dbapi2 as sqlcipher
+        import pytest
+
+        db_path = tmp_path / "encrypted.db"
+
+        conn = sqlcipher.connect(str(db_path))
+        conn.execute('PRAGMA key = "correct_key"')
+        conn.execute("CREATE TABLE test (id INTEGER)")
+        conn.commit()
+        conn.close()
+
+        handler = MacAppSyncHandler(database_path=db_path, db_key="wrong_key")
+        conn = handler._connect()
+        with pytest.raises(Exception):
+            conn.execute("SELECT * FROM test").fetchall()
+        conn.close()
+
+    def test_connect_no_key_on_encrypted_fails(self, tmp_path):
+        """Should fail when no key is provided for an encrypted database."""
+        from pysqlcipher3 import dbapi2 as sqlcipher
+        import pytest
+
+        db_path = tmp_path / "encrypted.db"
+
+        conn = sqlcipher.connect(str(db_path))
+        conn.execute('PRAGMA key = "some_key"')
+        conn.execute("CREATE TABLE test (id INTEGER)")
+        conn.commit()
+        conn.close()
+
+        handler = MacAppSyncHandler(database_path=db_path)
+        conn = handler._connect()
+        with pytest.raises(Exception):
+            conn.execute("SELECT * FROM test").fetchall()
+        conn.close()
