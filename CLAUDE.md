@@ -24,10 +24,16 @@
 
 ## Project Context
 
-This is the Supernote OCR Enhancer - processes .note files with Apple Vision Framework OCR.
+This is the Supernote OCR Enhancer — processes `.note` files with Apple Vision Framework OCR. Part of a larger pipeline; see `~/Repositories/slatesync/AGENTS.md` for system-wide context, architectural decisions, and cross-repo conventions.
+
+- **Python 3.11**, managed by `pip` with a local `.venv/`. Do not use `uv`.
+- Tests: `.venv/bin/pytest tests/ -v`
+- Remote: `git@github.com:adamehirsch/supernote-ocr-enhancer.git` (fork of `liketheduck/supernote-ocr-enhancer`)
 
 Key files:
-- `app/main.py` - Entry point
-- `app/note_processor.py` - .note file handling
-- `app/database.py` - SQLite state tracking
-- `scripts/` - Helper scripts for OCR API management
+- `app/main.py` — Entry point, env var handling
+- `app/sync_handlers.py` — Sync database management (SQLCipher support for `en_supernote.db`)
+- `app/note_processor.py` — `.note` file handling and OCR injection
+- `app/database.py` — SQLite state tracking (processing history)
+- `scripts/` — Helper scripts for OCR API and launchd management
+- `tests/test_sync_handlers.py` — Sync handler tests (22 tests)
