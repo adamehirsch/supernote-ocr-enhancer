@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FileUpdateInfo:
     """Information about a modified file that needs sync database update."""
+
     file_path: Path
     new_size: int
     new_md5: str
@@ -150,7 +151,7 @@ class MacAppSyncHandler(SyncHandler):
                 "mode": "mac_app",
                 "status": "unavailable",
                 "database_path": str(self.database_path),
-                "error": "Database not found or inaccessible"
+                "error": "Database not found or inaccessible",
             }
 
         try:
@@ -165,14 +166,14 @@ class MacAppSyncHandler(SyncHandler):
                 "mode": "mac_app",
                 "status": "available",
                 "database_path": str(self.database_path),
-                "note_files_tracked": note_count
+                "note_files_tracked": note_count,
             }
         except Exception as e:
             return {
                 "mode": "mac_app",
                 "status": "error",
                 "database_path": str(self.database_path),
-                "error": str(e)
+                "error": str(e),
             }
 
     def update_modified_files(self, modified_files: List[Path]) -> Tuple[int, int]:
@@ -220,30 +221,42 @@ class MacAppSyncHandler(SyncHandler):
                     # ONLY update local_s_h_a and local_size
                     # DO NOT touch server_s_h_a or server_size - keep them as old values
                     # This triggers UPLOAD: local differs from server, local is newer
-                    cursor = conn.execute("""
+                    cursor = conn.execute(
+                        """
                         UPDATE supernote_sqlite_info
                         SET local_s_h_a = ?,
                             local_size = ?
                         WHERE file_name = ? AND path = ?
-                    """, (new_md5, str(new_size), file_name, file_dir))
+                    """,
+                        (new_md5, str(new_size), file_name, file_dir),
+                    )
 
                     if cursor.rowcount > 0:
-                        logger.debug(f"Updated sync database (upload trigger): {file_name}")
+                        logger.debug(
+                            f"Updated sync database (upload trigger): {file_name}"
+                        )
                         updated += 1
                     else:
                         # Try to find by filename only (path might differ slightly)
-                        cursor = conn.execute("""
+                        cursor = conn.execute(
+                            """
                             UPDATE supernote_sqlite_info
                             SET local_s_h_a = ?,
                                 local_size = ?
                             WHERE file_name = ?
-                        """, (new_md5, str(new_size), file_name))
+                        """,
+                            (new_md5, str(new_size), file_name),
+                        )
 
                         if cursor.rowcount > 0:
-                            logger.debug(f"Updated sync database by name (upload trigger): {file_name}")
+                            logger.debug(
+                                f"Updated sync database by name (upload trigger): {file_name}"
+                            )
                             updated += 1
                         else:
-                            logger.warning(f"File not found in sync database: {file_name}")
+                            logger.warning(
+                                f"File not found in sync database: {file_name}"
+                            )
                             # Not a failure - file might be new or not synced yet
                             updated += 1  # Count as success since OCR was injected
 
@@ -258,7 +271,9 @@ class MacAppSyncHandler(SyncHandler):
             logger.error(f"Database error during sync update: {e}")
             return updated, len(modified_files) - updated
 
-        logger.info(f"Mac app sync database updated: {updated} files updated, {failed} failed")
+        logger.info(
+            f"Mac app sync database updated: {updated} files updated, {failed} failed"
+        )
         return updated, failed
 
 
@@ -287,7 +302,7 @@ class PersonalCloudSyncHandler(SyncHandler):
         database_name: str = "supernotedb",
         username: str = "supernote",
         password: Optional[str] = None,
-        data_path: Optional[Path] = None
+        data_path: Optional[Path] = None,
     ):
         """
         Initialize Personal Cloud sync handler.
@@ -309,10 +324,17 @@ class PersonalCloudSyncHandler(SyncHandler):
         """Check if MariaDB container is running and accessible."""
         try:
             result = subprocess.run(
-                ["docker", "exec", self.container_name, "mysqladmin", "ping",
-                 f"-u{self.username}", f"-p{self.password}"],
+                [
+                    "docker",
+                    "exec",
+                    self.container_name,
+                    "mysqladmin",
+                    "ping",
+                    f"-u{self.username}",
+                    f"-p{self.password}",
+                ],
                 capture_output=True,
-                timeout=10
+                timeout=10,
             )
             return result.returncode == 0
         except Exception as e:
@@ -326,18 +348,27 @@ class PersonalCloudSyncHandler(SyncHandler):
                 "mode": "personal_cloud",
                 "status": "unavailable",
                 "container": self.container_name,
-                "error": "MariaDB container not running or not accessible"
+                "error": "MariaDB container not running or not accessible",
             }
 
         try:
             # Get count of note files
             result = subprocess.run(
-                ["docker", "exec", self.container_name, "mysql",
-                 f"-u{self.username}", f"-p{self.password}", self.database_name,
-                 "-N", "-e", "SELECT COUNT(*) FROM f_user_file WHERE file_name LIKE '%.note' AND is_active = 'Y';"],
+                [
+                    "docker",
+                    "exec",
+                    self.container_name,
+                    "mysql",
+                    f"-u{self.username}",
+                    f"-p{self.password}",
+                    self.database_name,
+                    "-N",
+                    "-e",
+                    "SELECT COUNT(*) FROM f_user_file WHERE file_name LIKE '%.note' AND is_active = 'Y';",
+                ],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
             note_count = int(result.stdout.strip()) if result.returncode == 0 else 0
 
@@ -345,14 +376,14 @@ class PersonalCloudSyncHandler(SyncHandler):
                 "mode": "personal_cloud",
                 "status": "available",
                 "container": self.container_name,
-                "note_files_tracked": note_count
+                "note_files_tracked": note_count,
             }
         except Exception as e:
             return {
                 "mode": "personal_cloud",
                 "status": "error",
                 "container": self.container_name,
-                "error": str(e)
+                "error": str(e),
             }
 
     def update_modified_files(self, modified_files: List[Path]) -> Tuple[int, int]:
@@ -418,12 +449,20 @@ class PersonalCloudSyncHandler(SyncHandler):
                 """
 
                 result = subprocess.run(
-                    ["docker", "exec", self.container_name, "mysql",
-                     f"-u{self.username}", f"-p{self.password}", self.database_name,
-                     "-e", update_sql],
+                    [
+                        "docker",
+                        "exec",
+                        self.container_name,
+                        "mysql",
+                        f"-u{self.username}",
+                        f"-p{self.password}",
+                        self.database_name,
+                        "-e",
+                        update_sql,
+                    ],
                     capture_output=True,
                     text=True,
-                    timeout=10
+                    timeout=10,
                 )
 
                 if result.returncode == 0:
@@ -469,18 +508,33 @@ class PersonalCloudSyncHandler(SyncHandler):
             """
 
             result = subprocess.run(
-                ["docker", "exec", self.container_name, "mysql",
-                 f"-u{self.username}", f"-p{self.password}", self.database_name,
-                 "-N", "-e", query],
+                [
+                    "docker",
+                    "exec",
+                    self.container_name,
+                    "mysql",
+                    f"-u{self.username}",
+                    f"-p{self.password}",
+                    self.database_name,
+                    "-N",
+                    "-e",
+                    query,
+                ],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
 
             if result.returncode == 0:
-                files = set(line.strip() for line in result.stdout.strip().split('\n') if line.strip())
+                files = set(
+                    line.strip()
+                    for line in result.stdout.strip().split("\n")
+                    if line.strip()
+                )
                 if files:
-                    logger.info(f"Found {len(files)} recently uploaded files (last {minutes} min)")
+                    logger.info(
+                        f"Found {len(files)} recently uploaded files (last {minutes} min)"
+                    )
                 return files
             else:
                 logger.error(f"Failed to query recent uploads: {result.stderr}")
@@ -499,7 +553,7 @@ def create_sync_handler(
     personal_cloud_password: Optional[str] = None,
     personal_cloud_data_path: Optional[str] = None,
     sync_server_compose: Optional[str] = None,
-    sync_server_env: Optional[str] = None
+    sync_server_env: Optional[str] = None,
 ) -> SyncHandler:
     """
     Factory function to create appropriate sync handler based on configuration.
@@ -537,30 +591,44 @@ def create_sync_handler(
                     mac_app_database = str(detected)
                     logger.info(f"Auto-detected Mac app database: {mac_app_database}")
                 else:
-                    raise ValueError("mac_app mode requires MACAPP_DATABASE_PATH or auto-detection")
+                    raise ValueError(
+                        "mac_app mode requires MACAPP_DATABASE_PATH or auto-detection"
+                    )
             logger.info(f"Using Mac app sync handler: {mac_app_database}")
             return MacAppSyncHandler(
                 database_path=Path(mac_app_database),
-                notes_base_path=Path(mac_app_notes_path) if mac_app_notes_path else None
+                notes_base_path=Path(mac_app_notes_path)
+                if mac_app_notes_path
+                else None,
             )
         elif mode == "personal_cloud":
-            logger.info(f"Using Personal Cloud sync handler: {personal_cloud_container}")
+            logger.info(
+                f"Using Personal Cloud sync handler: {personal_cloud_container}"
+            )
             return PersonalCloudSyncHandler(
                 container_name=personal_cloud_container,
                 password=personal_cloud_password,
-                data_path=Path(personal_cloud_data_path) if personal_cloud_data_path else None
+                data_path=Path(personal_cloud_data_path)
+                if personal_cloud_data_path
+                else None,
             )
         else:
-            raise ValueError(f"Unknown sync mode: {mode}. Use 'none', 'mac_app', or 'personal_cloud'")
+            raise ValueError(
+                f"Unknown sync mode: {mode}. Use 'none', 'mac_app', or 'personal_cloud'"
+            )
 
     # No explicit mode - determine from configuration
     # Personal Cloud is the DEFAULT when sync server is configured
     if sync_server_compose and os.path.exists(sync_server_compose):
-        logger.info(f"Personal Cloud configured (default) - sync server: {sync_server_compose}")
+        logger.info(
+            f"Personal Cloud configured (default) - sync server: {sync_server_compose}"
+        )
         return PersonalCloudSyncHandler(
             container_name=personal_cloud_container,
             password=personal_cloud_password,
-            data_path=Path(personal_cloud_data_path) if personal_cloud_data_path else None
+            data_path=Path(personal_cloud_data_path)
+            if personal_cloud_data_path
+            else None,
         )
 
     # Check for Mac app configuration
@@ -568,7 +636,7 @@ def create_sync_handler(
         logger.info(f"Using Mac app sync handler: {mac_app_database}")
         return MacAppSyncHandler(
             database_path=Path(mac_app_database),
-            notes_base_path=Path(mac_app_notes_path) if mac_app_notes_path else None
+            notes_base_path=Path(mac_app_notes_path) if mac_app_notes_path else None,
         )
 
     # No sync configuration - use no-op
@@ -587,7 +655,10 @@ def auto_detect_mac_app_path() -> Optional[Path]:
 
     Where <USER_ID> is a numeric directory.
     """
-    base_path = Path.home() / "Library/Containers/com.ratta.supernote/Data/Library/Application Support/com.ratta.supernote"
+    base_path = (
+        Path.home()
+        / "Library/Containers/com.ratta.supernote/Data/Library/Application Support/com.ratta.supernote"
+    )
 
     if not base_path.exists():
         return None
@@ -604,11 +675,11 @@ def auto_detect_mac_app_database() -> Optional[Path]:
     """
     Auto-detect the Supernote Mac app database path.
 
-    Returns the path to supernote.db if found, or None.
+    Returns the path to en_supernote.db if found, or None.
     """
     user_dir = auto_detect_mac_app_path()
     if user_dir:
-        db_path = user_dir / "supernote.db"
+        db_path = user_dir / "en_supernote.db"
         if db_path.exists():
             return db_path
     return None
