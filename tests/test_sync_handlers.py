@@ -13,30 +13,32 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 from sync_handlers import auto_detect_mac_app_database, auto_detect_mac_app_path
 from sync_handlers import MacAppSyncHandler, create_sync_handler
 
+FILE_SYNC_INFO_DDL = """
+    CREATE TABLE "file_sync_info" (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "server_id" TEXT NULL,
+        "path" TEXT NULL,
+        "last_path" TEXT NULL,
+        "delete_path" TEXT NULL,
+        "last_size" INTEGER NULL,
+        "last_modified" INTEGER NULL,
+        "last_md5" TEXT NULL,
+        "server_path" TEXT NULL,
+        "event_time" INTEGER NOT NULL DEFAULT (CAST(strftime('%s', CURRENT_TIMESTAMP) AS INTEGER)),
+        "event_type" TEXT NULL,
+        "is_file" INTEGER NOT NULL DEFAULT 1,
+        "is_sync" INTEGER NOT NULL DEFAULT 0,
+        "cached_path" TEXT NULL,
+        "sync_status" INTEGER NULL,
+        UNIQUE ("path")
+    )
+"""
+
 
 def _create_file_sync_info_db(db_path, rows=None):
     """Helper: create an unencrypted DB with the file_sync_info schema."""
     conn = sqlite3.connect(str(db_path))
-    conn.execute("""
-        CREATE TABLE "file_sync_info" (
-            "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-            "server_id" TEXT NULL,
-            "path" TEXT NULL,
-            "last_path" TEXT NULL,
-            "delete_path" TEXT NULL,
-            "last_size" INTEGER NULL,
-            "last_modified" INTEGER NULL,
-            "last_md5" TEXT NULL,
-            "server_path" TEXT NULL,
-            "event_time" INTEGER NOT NULL DEFAULT (CAST(strftime('%s', CURRENT_TIMESTAMP) AS INTEGER)),
-            "event_type" TEXT NULL,
-            "is_file" INTEGER NOT NULL DEFAULT 1,
-            "is_sync" INTEGER NOT NULL DEFAULT 0,
-            "cached_path" TEXT NULL,
-            "sync_status" INTEGER NULL,
-            UNIQUE ("path")
-        )
-    """)
+    conn.execute(FILE_SYNC_INFO_DDL)
     if rows:
         for row in rows:
             conn.execute(
@@ -374,3 +376,82 @@ class TestCreateSyncHandler:
 
         handler = create_sync_handler(mode="none")
         assert isinstance(handler, NoOpSyncHandler)
+
+
+class TestMacAppIntegrationEncrypted:
+    """Integration tests using an encrypted database (pysqlcipher3 required)."""
+
+    def _create_encrypted_db(self, db_path, key, rows=None):
+        """Create an encrypted database with file_sync_info schema."""
+        from pysqlcipher3 import dbapi2 as sqlcipher
+
+        conn = sqlcipher.connect(str(db_path))
+        conn.execute(f'PRAGMA key = "{key}"')
+        conn.execute(FILE_SYNC_INFO_DDL)
+        if rows:
+            for row in rows:
+                conn.execute(
+                    "INSERT INTO file_sync_info (path, last_size, last_modified, last_md5, is_file) VALUES (?, ?, ?, ?, ?)",
+                    row,
+                )
+        conn.commit()
+        conn.close()
+
+    def _read_encrypted_db(self, db_path, key, query):
+        """Read from encrypted database."""
+        from pysqlcipher3 import dbapi2 as sqlcipher
+
+        conn = sqlcipher.connect(str(db_path))
+        conn.execute(f'PRAGMA key = "{key}"')
+        result = conn.execute(query).fetchall()
+        conn.close()
+        return result
+
+    def test_full_flow_encrypted(self, tmp_path):
+        """End-to-end: encrypted DB → is_available → get_status → update_modified_files."""
+        key = "integration_test_key"
+        db_path = tmp_path / "en_supernote.db"
+
+        # Create encrypted DB with one .note file tracked
+        self._create_encrypted_db(
+            db_path,
+            key,
+            rows=[
+                ("Note/test.note", 100, 1000000000, "original_md5", 1),
+                ("Note", 0, None, None, 0),
+            ],
+        )
+
+        # Create the .note file on disk
+        notes_base = tmp_path / "Supernote"
+        note_dir = notes_base / "Note"
+        note_dir.mkdir(parents=True)
+        note_file = note_dir / "test.note"
+        note_file.write_bytes(b"OCR-enhanced content goes here")
+
+        handler = MacAppSyncHandler(
+            database_path=db_path, notes_base_path=notes_base, db_key=key
+        )
+
+        # is_available
+        assert handler.is_available() is True
+
+        # get_status
+        status = handler.get_status()
+        assert status["note_files_tracked"] == 1
+
+        # update_modified_files
+        updated, failed = handler.update_modified_files([note_file])
+        assert updated == 1
+        assert failed == 0
+
+        # Verify DB was updated through encryption
+        rows = self._read_encrypted_db(
+            db_path,
+            key,
+            "SELECT last_size, last_md5, last_modified FROM file_sync_info WHERE path = 'Note/test.note'",
+        )
+        assert len(rows) == 1
+        assert rows[0][0] == note_file.stat().st_size
+        assert rows[0][1] != "original_md5"
+        assert rows[0][2] != 1000000000
