@@ -168,9 +168,9 @@ class MacAppSyncHandler(SyncHandler):
             return False
 
         try:
-            conn = sqlite3.connect(str(self.database_path))
+            conn = self._connect()
             cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='supernote_sqlite_info'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='file_sync_info'"
             )
             exists = cursor.fetchone() is not None
             conn.close()
@@ -190,9 +190,9 @@ class MacAppSyncHandler(SyncHandler):
             }
 
         try:
-            conn = sqlite3.connect(str(self.database_path))
+            conn = self._connect()
             cursor = conn.execute(
-                "SELECT COUNT(*) FROM supernote_sqlite_info WHERE file_name LIKE '%.note'"
+                "SELECT COUNT(*) FROM file_sync_info WHERE is_file = 1 AND path LIKE '%.note'"
             )
             note_count = cursor.fetchone()[0]
             conn.close()

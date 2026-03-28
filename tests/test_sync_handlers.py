@@ -14,6 +14,39 @@ from sync_handlers import auto_detect_mac_app_database, auto_detect_mac_app_path
 from sync_handlers import MacAppSyncHandler
 
 
+def _create_file_sync_info_db(db_path, rows=None):
+    """Helper: create an unencrypted DB with the file_sync_info schema."""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE "file_sync_info" (
+            "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            "server_id" TEXT NULL,
+            "path" TEXT NULL,
+            "last_path" TEXT NULL,
+            "delete_path" TEXT NULL,
+            "last_size" INTEGER NULL,
+            "last_modified" INTEGER NULL,
+            "last_md5" TEXT NULL,
+            "server_path" TEXT NULL,
+            "event_time" INTEGER NOT NULL DEFAULT (CAST(strftime('%s', CURRENT_TIMESTAMP) AS INTEGER)),
+            "event_type" TEXT NULL,
+            "is_file" INTEGER NOT NULL DEFAULT 1,
+            "is_sync" INTEGER NOT NULL DEFAULT 0,
+            "cached_path" TEXT NULL,
+            "sync_status" INTEGER NULL,
+            UNIQUE ("path")
+        )
+    """)
+    if rows:
+        for row in rows:
+            conn.execute(
+                "INSERT INTO file_sync_info (path, last_size, last_modified, last_md5, is_file) VALUES (?, ?, ?, ?, ?)",
+                row,
+            )
+    conn.commit()
+    conn.close()
+
+
 class TestAutoDetectMacAppDatabase:
     """Tests for auto_detect_mac_app_database()."""
 
@@ -130,3 +163,63 @@ class TestMacAppConnect:
         with pytest.raises(Exception):
             conn.execute("SELECT * FROM test").fetchall()
         conn.close()
+
+
+class TestMacAppIsAvailable:
+    """Tests for MacAppSyncHandler.is_available()."""
+
+    def test_available_with_file_sync_info(self, tmp_path):
+        """Should return True when file_sync_info table exists."""
+        db_path = tmp_path / "en_supernote.db"
+        _create_file_sync_info_db(db_path)
+
+        handler = MacAppSyncHandler(database_path=db_path)
+        assert handler.is_available() is True
+
+    def test_unavailable_without_table(self, tmp_path):
+        """Should return False when file_sync_info table doesn't exist."""
+        db_path = tmp_path / "en_supernote.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE other_table (id INTEGER)")
+        conn.commit()
+        conn.close()
+
+        handler = MacAppSyncHandler(database_path=db_path)
+        assert handler.is_available() is False
+
+    def test_unavailable_when_file_missing(self, tmp_path):
+        """Should return False when database file doesn't exist."""
+        handler = MacAppSyncHandler(database_path=tmp_path / "nonexistent.db")
+        assert handler.is_available() is False
+
+
+class TestMacAppGetStatus:
+    """Tests for MacAppSyncHandler.get_status()."""
+
+    def test_counts_note_files(self, tmp_path):
+        """Should count only .note files (is_file=1)."""
+        db_path = tmp_path / "en_supernote.db"
+        _create_file_sync_info_db(
+            db_path,
+            rows=[
+                ("Note/file1.note", 1000, 1234567890, "abc123", 1),
+                ("Note/file2.note", 2000, 1234567891, "def456", 1),
+                ("Note", 0, None, None, 0),  # directory, should not be counted
+                ("SCREENSHOT/img.png", 500, 1234567892, "ghi789", 1),  # not .note
+            ],
+        )
+
+        handler = MacAppSyncHandler(database_path=db_path)
+        status = handler.get_status()
+
+        assert status["mode"] == "mac_app"
+        assert status["status"] == "available"
+        assert status["note_files_tracked"] == 2
+
+    def test_unavailable_status(self, tmp_path):
+        """Should return unavailable when database is missing."""
+        handler = MacAppSyncHandler(database_path=tmp_path / "nonexistent.db")
+        status = handler.get_status()
+
+        assert status["mode"] == "mac_app"
+        assert status["status"] == "unavailable"
