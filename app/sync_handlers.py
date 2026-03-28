@@ -147,6 +147,10 @@ class MacAppSyncHandler(SyncHandler):
         Uses pysqlcipher3 when a key is configured, plain sqlite3 otherwise.
         """
         if self.db_key:
+            if '"' in self.db_key:
+                raise ValueError(
+                    "Database key must not contain double-quote characters"
+                )
             try:
                 from pysqlcipher3 import dbapi2 as sqlcipher
             except ImportError:
@@ -167,17 +171,20 @@ class MacAppSyncHandler(SyncHandler):
             logger.warning(f"Mac app database not found: {self.database_path}")
             return False
 
+        conn = None
         try:
             conn = self._connect()
             cursor = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='file_sync_info'"
             )
             exists = cursor.fetchone() is not None
-            conn.close()
             return exists
         except Exception as e:
             logger.error(f"Failed to access Mac app database: {e}")
             return False
+        finally:
+            if conn:
+                conn.close()
 
     def get_status(self) -> dict:
         """Get status information about the Mac app sync database."""
@@ -189,13 +196,13 @@ class MacAppSyncHandler(SyncHandler):
                 "error": "Database not found or inaccessible",
             }
 
+        conn = None
         try:
             conn = self._connect()
             cursor = conn.execute(
                 "SELECT COUNT(*) FROM file_sync_info WHERE is_file = 1 AND path LIKE '%.note'"
             )
             note_count = cursor.fetchone()[0]
-            conn.close()
 
             return {
                 "mode": "mac_app",
@@ -210,6 +217,9 @@ class MacAppSyncHandler(SyncHandler):
                 "database_path": str(self.database_path),
                 "error": str(e),
             }
+        finally:
+            if conn:
+                conn.close()
 
     def update_modified_files(self, modified_files: List[Path]) -> Tuple[int, int]:
         """
@@ -229,6 +239,7 @@ class MacAppSyncHandler(SyncHandler):
         updated = 0
         failed = 0
 
+        conn = None
         try:
             conn = self._connect()
 
@@ -241,8 +252,9 @@ class MacAppSyncHandler(SyncHandler):
                         continue
 
                     new_md5 = compute_file_md5(file_path)
-                    new_size = file_path.stat().st_size
-                    new_mtime = int(file_path.stat().st_mtime)
+                    file_stat = file_path.stat()
+                    new_size = file_stat.st_size
+                    new_mtime = int(file_stat.st_mtime)
 
                     # Resolve relative path for file_sync_info.path
                     relative_path = None
@@ -292,11 +304,13 @@ class MacAppSyncHandler(SyncHandler):
                     failed += 1
 
             conn.commit()
-            conn.close()
 
         except Exception as e:
             logger.error(f"Database error during sync update: {e}")
             return updated, len(modified_files) - updated
+        finally:
+            if conn:
+                conn.close()
 
         logger.info(
             f"Mac app sync database updated: {updated} files updated, {failed} failed"
