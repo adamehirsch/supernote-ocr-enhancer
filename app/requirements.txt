@@ -15,3 +15,8 @@ pillow>=10.0.0
 
 # Data validation
 pydantic>=2.0.0
+
+# SQLCipher database support (for Mac app encrypted database)
+# Build requires: brew install sqlcipher
+# Install with: C_INCLUDE_PATH=$(brew --prefix sqlcipher)/include LIBRARY_PATH=$(brew --prefix sqlcipher)/lib pip install pysqlcipher3
+pysqlcipher3>=1.0.0
